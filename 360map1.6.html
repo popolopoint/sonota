@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>360°方位表示マップ</title>
+    <style>
+      #map {
+        width: 100vw;
+        height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <script>
+      let map;
+      let circleOverlay = null;
+
+      function initMap() {
+        map = new google.maps.Map(document.getElementById("map"), {
+          center: { lat: 26.33, lng: 127.85 }, // 沖縄うるま市あたり
+          zoom: 15,
+        });
+
+        // 地図をタップしたとき
+        map.addListener("click", (e) => {
+          const pos = e.latLng;
+
+          // すでに描画した円があれば削除
+          if (circleOverlay) {
+            circleOverlay.setMap(null);
+          }
+
+          // 360°分度器のような円を描く
+          circleOverlay = new google.maps.Circle({
+            strokeColor: "#ff0000",
+            strokeOpacity: 0.7,
+            strokeWeight: 2,
+            fillColor: "#ff0000",
+            fillOpacity: 0.05,
+            map,
+            center: pos,
+            radius: 200, // メートル（必要なら変更）
+          });
+
+          // 目印マーカーも表示
+          new google.maps.Marker({
+            position: pos,
+            map: map,
+          });
+
+          // クリックした場所へ地図移動
+          map.panTo(pos);
+        });
+      }
+    </script>
+
+    <!-- Google Maps API -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAHhxSJK-IhYiT9XBRwE1MX7DHhghBQQQk&callback=initMap" async defer></script>
+  </body>
+</html>
