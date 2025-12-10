@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>A→B 方位</title>
+  <style>
+    #map { width:100%; height:100vh; }
+    #bearingBox {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 18px;
+      font-weight: bold;
+      box-shadow: 0 0 6px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+
+<div id="bearingBox">方位：--°</div>
+<div id="map"></div>
+
+<script>
+let map;
+let pointA = null;
+let markerA = null;
+let markerB = null;
+let line = null;
+
+function initMap() {
+  map = new google.maps.Map(document.getElementById("map"), {
+    center: { lat: 26.33, lng: 127.85 },
+    zoom: 14,
+  });
+
+  map.addListener("click", (e) => {
+    handleTap(e.latLng);
+  });
+}
+
+function handleTap(latlng) {
+  if (!pointA) {
+    pointA = latlng;
+    if (markerA) markerA.setMap(null);
+    markerA = new google.maps.Marker({
+      position: latlng,
+      map: map,
+      label: "A"
+    });
+    document.getElementById("bearingBox").innerHTML = "方位：--°";
+  } else {
+    if (markerB) markerB.setMap(null);
+    markerB = new google.maps.Marker({
+      position: latlng,
+      map: map,
+      label: "B"
+    });
+
+    drawLine(pointA, latlng);
+    const bearing = getBearing(pointA, latlng);
+    document.getElementById("bearingBox").innerHTML = "方位：" + bearing + "°";
+
+    pointA = null;  // 次の計測に備える
+  }
+}
+
+function drawLine(a, b) {
+  if (line) line.setMap(null);
+  line = new google.maps.Polyline({
+    path: [a, b],
+    map: map,
+    strokeColor: "#ff0000",
+    strokeWeight: 3
+  });
+}
+
+function getBearing(a, b) {
+  const lat1 = a.lat() * Math.PI / 180;
+  const lat2 = b.lat() * Math.PI / 180;
+  const dLng = (b.lng() - a.lng()) * Math.PI / 180;
+
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1)*Math.sin(lat2) -
+            Math.sin(lat1)*Math.cos(lat2)*Math.cos(dLng);
+
+  let brng = Math.atan2(y, x) * 180 / Math.PI;
+  brng = (brng + 360) % 360;
+  return Math.round(brng);
+}
+</script>
+
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAHhxSJK-IhYiT9XBRwE1MX7DHhghBQQQk&callback=initMap" async></script>
+</body>
+</html>
