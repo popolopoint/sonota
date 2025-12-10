@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>方位表示マップ</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    #map { width: 100%; height: 100vh; }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 18px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+
+<div id="info">タップした方向：なし</div>
+<div id="map"></div>
+
+<script>
+let map;
+let userPos = null;
+let marker = null;
+
+function initMap() {
+  map = new google.maps.Map(document.getElementById("map"), {
+    center: { lat: 26.33, lng: 127.85 }, // うるま市付近
+    zoom: 12,
+  });
+
+  // 現在地の取得
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition((pos) => {
+      userPos = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+      };
+
+      map.setCenter(userPos);
+
+      new google.maps.Marker({
+        position: userPos,
+        map,
+        label: "●",
+      });
+    });
+  }
+
+  // マップをタップしたときの処理
+  map.addListener("click", (e) => {
+    if (!userPos) return;
+
+    const angle = calcBearing(
+      userPos.lat,
+      userPos.lng,
+      e.latLng.lat(),
+      e.latLng.lng()
+    );
+
+    document.getElementById("info").innerText =
+      "タップした方向：" + angle.toFixed(1) + "°";
+
+    if (marker) marker.setMap(null);
+    marker = new google.maps.Marker({
+      position: e.latLng,
+      map,
+    });
+  });
+}
+
+// 2点間の方位を計算する
+function calcBearing(lat1, lon1, lat2, lon2) {
+  const toRad = (d) => d * Math.PI / 180;
+  const toDeg = (r) => r * 180 / Math.PI;
+
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const λ1 = toRad(lon1);
+  const λ2 = toRad(lon2);
+
+  const y = Math.sin(λ2 - λ1) * Math.cos(φ2);
+  const x = Math.cos(φ1)*Math.sin(φ2) -
+            Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2 - λ1);
+
+  let θ = Math.atan2(y, x);
+  θ = toDeg(θ);
+  return (θ + 360) % 360; // 0-360度に正規化
+}
+</script>
+
+<script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAHhxSJK-IhYiT9XBRwE1MX7DHhghBQQQk&callback=initMap"></script>
+
+</body>
+</html>
