@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A→B 方位表示</title>
+<style>
+  #map { width: 100%; height: 100vh; }
+  #info { position: absolute; top: 10px; left: 10px; background: white; padding: 8px; border-radius: 6px; font-size: 18px; }
+</style>
+</head>
+<body>
+
+<div id="info">A点をタップしてください</div>
+<div id="map"></div>
+
+<script>
+let map, A=null, B=null, markerA, markerB, line;
+
+function initMap() {
+  map = new google.maps.Map(document.getElementById("map"), {
+    center: { lat: 26.333, lng: 127.851 },
+    zoom: 15,
+  });
+
+  map.addListener("click", (e) => {
+    if (A === null) {
+      A = e.latLng;
+      markerA = new google.maps.Marker({ position: A, map: map, label:"A" });
+      document.getElementById("info").innerText = "次にB点をタップしてください";
+    } else if (B === null) {
+      B = e.latLng;
+      markerB = new google.maps.Marker({ position: B, map: map, label:"B" });
+      calcBearing();
+    } else {
+      resetPoints();
+    }
+  });
+}
+
+function calcBearing() {
+  let lat1 = A.lat() * Math.PI/180;
+  let lat2 = B.lat() * Math.PI/180;
+  let dLng = (B.lng() - A.lng()) * Math.PI/180;
+
+  let y = Math.sin(dLng) * Math.cos(lat2);
+  let x = Math.cos(lat1)*Math.sin(lat2) - Math.sin(lat1)*Math.cos(lat2)*Math.cos(dLng);
+  let brng = Math.atan2(y, x) * 180/Math.PI;
+  brng = (brng + 360) % 360;
+
+  line = new google.maps.Polyline({
+    path: [A, B],
+    map: map,
+    strokeColor: "#ff0000",
+    strokeWeight: 3
+  });
+
+  document.getElementById("info").innerText = "A→B の方位: " + brng.toFixed(1) + "°";
+}
+
+function resetPoints() {
+  A = null; B = null;
+  if (markerA) markerA.setMap(null);
+  if (markerB) markerB.setMap(null);
+  if (line) line.setMap(null);
+  document.getElementById("info").innerText = "A点をタップしてください";
+}
+</script>
+
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAHhxSJK-IhYiT9XBRwE1MX7DHhghBQQQk&callback=initMap" async></script>
+
+</body>
+</html>
