@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>360map2.5e - 方位センサー連動</title>
+    <style>
+        /* 地図コンテナのスタイル */
+        #map {
+            height: 70vh; /* センサー窓のために高さを調整 */
+            width: 100%;
+        }
+        /* 結果表示エリアのスタイル */
+        #result {
+            margin-top: 10px;
+            padding: 15px;
+            border: 1px solid #007bff;
+            background-color: #e9f5ff;
+            border-radius: 5px;
+        }
+        #result h3 {
+            color: #007bff;
+        }
+        /* センサー窓のスタイル */
+        #compassWindow {
+            padding: 15px;
+            margin-top: 10px;
+            border: 2px solid #ff9900;
+            background-color: #fff8e1;
+            border-radius: 5px;
+            text-align: center;
+        }
+        #compassWindow strong {
+            display: block;
+            font-size: 1.1em;
+            margin-bottom: 5px;
+            color: #ff9900;
+        }
+        #headingDisplay {
+            font-size: 2.5em;
+            color: #d9534f; /* 赤系 */
+            font-weight: bold;
+        }
+        /* ボタンのスタイル */
+        #setLocationButton {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            margin-right: 10px;
+        }
+        #startCompassButton {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #ff9900; /* センサー用ボタンの色 */
+            color: white;
+            border: none;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>方位センサー連動計算 (360map2.5e)</h1>
+
+    <button id="setLocationButton">現在位置をA点に設定</button>
+    
+    <div id="bPointSelection">
+        <strong>B点 (目的地) の選択:</strong>
+        <label><input type="radio" name="b_option" value="gushikawa" checked> 具志川火力発電所</label>
+        <label><input type="radio" name="b_option" value="kinjo"> 金武火力発電所</label>
+        <label><input type="radio" name="b_option" value="tap"> 地図上でタップ</label>
+    </div>
+    <p id="bTapInstruction" style="display:none; color: red; font-weight: bold;">**地図をタップしてB点を設定してください**</p>
+
+    <div id="result">
+        <p class="initial-prompt">まずA点とB点を設定してください。</p>
+    </div>
+
+    <button id="startCompassButton" disabled>B点にスマホを向ける (センサー開始)</button>
+    <div id="compassWindow">
+        <strong>🧭 B点への方向</strong>
+        <p id="headingDisplay">--</p>
+        <p style="font-size: 0.9em;" id="compassStatus">A点とB点が設定されると利用可能になります。</p>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // Google Maps APIキーを設定
+        const API_KEY = "AIzaSyAHhxSJK-IhYiT9XBRwE1MX7DHhghBQQQk"; 
+
+        const B_POINTS = {
+            gushikawa: { lat: 26.3803176, lng: 127.8751869, name: "具志川火力発電所 (B点)" },
+            kinjo: { lat: 26.4454055, lng: 127.9209787, name: "金武火力発電所 (B点)" }
+            // 追加したいB点があればここに追加してください
+        };
+        
+        let map;
+        let currentOriginA = null;
+        let currentDestinationB = null;
+        let mapTapMode = false;
+        
+        let markerA = null;
+        let markerB = null;
+        let polyline = null;
+
+        let targetBearing = null; // A点からB点への目標方位 (計算結果)
+
+
+        /**
+         * マップを初期化し、イベントを設定する
+         */
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 12,
+                center: B_POINTS.gushikawa,
+            });
+
+            // イベントリスナーの設定
+            document.getElementById('setLocationButton').addEventListener('click', findCurrentLocation);
+            document.getElementById('startCompassButton').addEventListener('click', initCompass);
+            
+            document.getElementsByName('b_option').forEach(radio => {
+                radio.addEventListener('change', handleBSelectionChange);
+            });
+            map.addListener('click', handleMapClick);
+
+            // 初期B点を設定 (デフォルトは具志川)
+            setDestinationB(B_POINTS.gushikawa);
+            updateCompassButtonStatus();
+        }
+        
+        // --- センサー関連の関数 ---
+
+        /**
+         * センサーアクセスを要求し、イベントリスナーを設定する
+         */
+        function initCompass() {
+            const statusDiv = document.getElementById('compassStatus');
+            
+            if (!targetBearing) {
+                statusDiv.textContent = '計算が必要です。A点とB点を設定してください。';
+                return;
+            }
+
+            // iOS 13+ の権限リクエスト (標準化された形式ではないが、多くのiOSデバイスで必要)
+            if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                            statusDiv.textContent = 'センサー稼働中。端末を動かしてください。';
+                        } else {
+                            statusDiv.textContent = 'センサー利用が拒否されました。設定を確認してください。';
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                // その他のブラウザ (Android/古いiOSなど)
+                window.addEventListener('deviceorientation', handleOrientation);
+                statusDiv.textContent = 'センサー稼働中。端末を動かしてください。';
+            }
+            
+            document.getElementById('startCompassButton').disabled = true;
+        }
+
+        /**
+         * デバイスの向きが変更されたときの処理
+         * @param {DeviceOrientationEvent} event 
+         */
+        function handleOrientation(event) {
+            if (event.alpha === null || targetBearing === null) return;
+
+            // コンパス方位を取得 (北を0度、時計回り)
+            // Web標準では Alpha は磁北からの角度 (0-360) を示す。
+            // 端末の向きとコンパスの差を考慮するため、360から引くことが多いが、ここではシンプルに
+            let currentHeading = 360 - event.alpha; // 磁北を基準とした方位
+
+            // 目的地への目標方位と現在の進行方向の差を計算
+            // 目標 (targetBearing) - 現在の方向 (currentHeading)
+            let diff = targetBearing - currentHeading;
+
+            // 差を -180度から +180度の間に正規化
+            if (diff > 180) {
+                diff -= 360;
+            } else if (diff < -180) {
+                diff += 360;
+            }
+
+            const display = document.getElementById('headingDisplay');
+            
+            if (Math.abs(diff) < 5) {
+                display.innerHTML = `✅ ${targetBearing.toFixed(1)}° <br> **方向が合っています**`;
+                display.style.color = '#28a745'; // 緑
+            } else {
+                let turnDirection = diff > 0 ? '右' : '左';
+                display.innerHTML = `目標: ${targetBearing.toFixed(1)}° <br> ${turnDirection}に${Math.abs(diff).toFixed(1)}°向け直してください`;
+                display.style.color = '#d9534f'; // 赤
+            }
+        }
+        
+        /**
+         * B点選択ラジオボタンが変更されたときの処理
+         */
+        function handleBSelectionChange(event) {
+            // ... (前バージョンの B点選択ロジック ... 変更なし) ...
+            const selectedValue = event.target.value;
+            document.getElementById('bTapInstruction').style.display = 'none';
+            mapTapMode = false;
+            
+            if (selectedValue === 'tap') {
+                document.getElementById('bTapInstruction').style.display = 'block';
+                currentDestinationB = null;
+                mapTapMode = true;
+            } else {
+                setDestinationB(B_POINTS[selectedValue]);
+            }
+            
+            if (currentOriginA) {
+                calculateAndDisplay();
+            }
+            updateCompassButtonStatus();
+        }
+
+        /**
+         * マップがクリックされたときの処理
+         */
+        function handleMapClick(event) {
+            if (mapTapMode) {
+                setDestinationB({
+                    lat: event.latLng.lat(), 
+                    lng: event.latLng.lng(), 
+                    name: "マップタップ位置 (B点)"
+                });
+                
+                mapTapMode = false;
+                document.getElementById('bTapInstruction').style.display = 'none';
+                document.querySelector('input[name="b_option"][value="tap"]').checked = true;
+
+                if (currentOriginA) {
+                    calculateAndDisplay();
+                }
+                updateCompassButtonStatus();
+            }
+        }
+        
+        /**
+         * B点マーカーを設定し、計算を試みる
+         */
+        function setDestinationB(coords) {
+            currentDestinationB = new google.maps.LatLng(coords.lat, coords.lng);
+            
+            if (markerB) {
+                markerB.setPosition(currentDestinationB);
+                markerB.setTitle(coords.name);
+            } else {
+                markerB = new google.maps.Marker({
+                    position: currentDestinationB,
+                    map: map,
+                    title: coords.name,
+                    label: 'B',
+                });
+            }
+            
+            if (currentOriginA) {
+                calculateAndDisplay();
+            } else {
+                map.setCenter(currentDestinationB);
+            }
+        }
+        
+
+        /**
+         * 現在地を取得する (A点設定)
+         */
+        function findCurrentLocation() {
+            document.getElementById('result').innerHTML = '<p class="loading">現在地を検出中です...</p>';
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const currentLat = position.coords.latitude;
+                        const currentLng = position.coords.longitude;
+                        currentOriginA = new google.maps.LatLng(currentLat, currentLng);
+                        
+                        if (markerA) {
+                            markerA.setPosition(currentOriginA);
+                        } else {
+                            markerA = new google.maps.Marker({
+                                position: currentOriginA,
+                                map: map,
+                                title: "現在位置 (A点)",
+                                label: 'A',
+                                icon: {
+                                    path: google.maps.SymbolPath.CIRCLE,
+                                    scale: 8,
+                                    fillColor: '#007bff',
+                                    fillOpacity: 1,
+                                    strokeWeight: 0,
+                                }
+                            });
+                        }
+                        
+                        calculateAndDisplay();
+                        document.getElementById('setLocationButton').textContent = '現在位置をA点に設定 (更新)';
+                        updateCompassButtonStatus();
+
+                    },
+                    (error) => {
+                        handleLocationError(true);
+                        console.error("Geolocation failed:", error);
+                    }
+                );
+            } else {
+                handleLocationError(false);
+            }
+        }
+
+        /**
+         * 2点間の球面上の初期方位（Bearing）を計算する
+         */
+        function calculateBearing(startLat, startLng, endLat, endLng) {
+            const R_startLat = startLat * (Math.PI / 180);
+            const R_endLat = endLat * (Math.PI / 180);
+            const deltaLng = (endLng - startLng) * (Math.PI / 180);
+
+            const y = Math.sin(deltaLng) * Math.cos(R_endLat);
+            const x = Math.cos(R_startLat) * Math.sin(R_endLat) - 
+                      Math.sin(R_startLat) * Math.cos(R_endLat) * Math.cos(deltaLng);
+
+            let bearingRad = Math.atan2(y, x);
+            let bearingDeg = bearingRad * (180 / Math.PI);
+
+            return (bearingDeg + 360) % 360;
+        }
+
+
+        /**
+         * A点とB点が揃っている場合に、方位を計算し、マーカーと結果エリアに表示する
+         */
+        function calculateAndDisplay() {
+            if (!currentOriginA || !currentDestinationB) {
+                document.getElementById('result').innerHTML = `<h3>待機中...</h3><p>A点: ${currentOriginA ? '設定済み' : '未設定'}</p><p>B点: ${currentDestinationB ? '設定済み' : '未設定'}</p>`;
+                return;
+            }
+            
+            const startLat = currentOriginA.lat();
+            const startLng = currentOriginA.lng();
+            const endLat = currentDestinationB.lat();
+            const endLng = currentDestinationB.lng();
+
+            targetBearing = calculateBearing(startLat, startLng, endLat, endLng); // ★★★ 目標方位をグローバル変数に保存 ★★★
+
+            // 線の再描画
+            if (polyline) {
+                polyline.setMap(null);
+            }
+            polyline = new google.maps.Polyline({
+                path: [currentOriginA, currentDestinationB],
+                geodesic: true, 
+                strokeColor: '#FF0000',
+                strokeOpacity: 1.0,
+                strokeWeight: 2,
+                map: map,
+            });
+
+            // 地図の表示範囲を調整
+            const bounds = new google.maps.LatLngBounds();
+            bounds.extend(currentOriginA);
+            bounds.extend(currentDestinationB);
+            map.fitBounds(bounds);
+
+
+            // 結果を整形して表示
+            const resultDiv = document.getElementById('result');
+            let bName = markerB ? markerB.getTitle() : 'タップ位置';
+
+            resultDiv.innerHTML = `
+                <h3>✅ 方位計算完了</h3>
+                <p><strong>A点</strong> (現在位置): ${startLat.toFixed(4)}, ${startLng.toFixed(4)}</p>
+                <p><strong>B点</strong> (${bName}): ${endLat.toFixed(4)}, ${endLng.toFixed(4)}</p>
+                <p>
+                    <strong>A点から見たB点の方位 (Bearing): 
+                    <span style="font-size: 1.5em; color: #FF0000;">${targetBearing.toFixed(2)}°</span>
+                    </strong>
+                </p>
+                <p>（北を0°として時計回りの角度）</p>
+            `;
+            updateCompassButtonStatus();
+        }
+        
+        /**
+         * センサーボタンの有効/無効を更新する
+         */
+        function updateCompassButtonStatus() {
+            const button = document.getElementById('startCompassButton');
+            const statusDiv = document.getElementById('compassStatus');
+            
+            if (currentOriginA && currentDestinationB) {
+                button.disabled = false;
+                statusDiv.textContent = '方位センサーを起動するには、上のボタンを押してください。';
+            } else {
+                button.disabled = true;
+                statusDiv.textContent = 'A点とB点が設定されると利用可能になります。';
+            }
+        }
+        
+        /**
+         * 位置情報の取得に失敗した場合の処理
+         */
+        function handleLocationError(browserHasGeolocation) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `
+                <h3>❌ 現在位置の取得に失敗 (A点未設定)</h3>
+                <p style="color: red;">${browserHasGeolocation ? 
+                    'エラーが発生しました。位置情報へのアクセスが拒否されたか、タイムアウトしました。' : 
+                    'お使いのブラウザは位置情報APIをサポートしていません。'
+                }</p>
+            `;
+            updateCompassButtonStatus();
+        }
+    </script>
+
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAHhxSJK-IhYiT9XBRwE1MX7DHhghBQQQk&callback=initMap">
+    </script>
+</body>
+</html>
